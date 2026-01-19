@@ -1,0 +1,171 @@
+version: '3.8'
+
+services:
+  # Base de datos PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: odontologia-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: odontologia_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - odontologia-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Servicio de Autenticación
+  auth-service:
+    build:
+      context: .
+      dockerfile: auth-service/Dockerfile
+    container_name: auth-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=odontologia_db
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - JWT_SECRET=tu_secreto_super_seguro_aqui_cambiar_en_produccion
+      - AUTH_PORT=3001
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - odontologia-network
+    restart: unless-stopped
+
+  # Servicio de Pacientes
+  patient-service:
+    build:
+      context: .
+      dockerfile: patient-service/Dockerfile
+    container_name: patient-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=odontologia_db
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - JWT_SECRET=tu_secreto_super_seguro_aqui_cambiar_en_produccion
+      - PATIENT_PORT=3002
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - odontologia-network
+    restart: unless-stopped
+
+  # Servicio de Fichas
+  ficha-service:
+    build:
+      context: .
+      dockerfile: ficha-service/Dockerfile
+    container_name: ficha-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=odontologia_db
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - JWT_SECRET=tu_secreto_super_seguro_aqui_cambiar_en_produccion
+      - FICHA_PORT=3003
+    ports:
+      - "3003:3003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - odontologia-network
+    restart: unless-stopped
+
+  # Servicio de Odontograma
+  odontogram-service:
+    build:
+      context: .
+      dockerfile: odontogram-service/Dockerfile
+    container_name: odontogram-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=odontologia_db
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - JWT_SECRET=tu_secreto_super_seguro_aqui_cambiar_en_produccion
+      - ODONTOGRAM_PORT=3004
+    ports:
+      - "3004:3004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - odontologia-network
+    restart: unless-stopped
+
+  # Servicio de Presupuestos
+  budget-service:
+    build:
+      context: .
+      dockerfile: budget-service/Dockerfile
+    container_name: budget-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=odontologia_db
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - JWT_SECRET=tu_secreto_super_seguro_aqui_cambiar_en_produccion
+      - BUDGET_PORT=3005
+    ports:
+      - "3005:3005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - odontologia-network
+    restart: unless-stopped
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    container_name: api-gateway
+    environment:
+      - GATEWAY_PORT=3000
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - PATIENT_SERVICE_URL=http://patient-service:3002
+      - FICHA_SERVICE_URL=http://ficha-service:3003
+      - ODONTOGRAM_SERVICE_URL=http://odontogram-service:3004
+      - BUDGET_SERVICE_URL=http://budget-service:3005
+      - JWT_SECRET=tu_secreto_super_seguro_aqui_cambiar_en_produccion
+    ports:
+      - "3000:3000"
+    depends_on:
+      - auth-service
+      - patient-service
+      - ficha-service
+      - odontogram-service
+      - budget-service
+    networks:
+      - odontologia-network
+    restart: unless-stopped
+
+networks:
+  odontologia-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
