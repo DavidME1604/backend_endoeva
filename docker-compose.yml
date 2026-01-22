@@ -137,6 +137,29 @@ services:
       - odontologia-network
     restart: unless-stopped
 
+  # Servicio de Citas
+  appointment-service:
+    build:
+      context: .
+      dockerfile: appointment-service/Dockerfile
+    container_name: appointment-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=odontologia_db
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - JWT_SECRET=tu_secreto_super_seguro_aqui_cambiar_en_produccion
+      - APPOINTMENT_PORT=3006
+    ports:
+      - "3006:3006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - odontologia-network
+    restart: unless-stopped
+
   # API Gateway
   api-gateway:
     build:
@@ -150,6 +173,7 @@ services:
       - FICHA_SERVICE_URL=http://ficha-service:3003
       - ODONTOGRAM_SERVICE_URL=http://odontogram-service:3004
       - BUDGET_SERVICE_URL=http://budget-service:3005
+      - APPOINTMENT_SERVICE_URL=http://appointment-service:3006
       - JWT_SECRET=tu_secreto_super_seguro_aqui_cambiar_en_produccion
     ports:
       - "3000:3000"
@@ -159,6 +183,7 @@ services:
       - ficha-service
       - odontogram-service
       - budget-service
+      - appointment-service
     networks:
       - odontologia-network
     restart: unless-stopped

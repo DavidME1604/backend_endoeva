@@ -15,7 +15,8 @@ const SERVICES = {
   patients: process.env.PATIENT_SERVICE_URL || 'http://localhost:3002',
   fichas: process.env.FICHA_SERVICE_URL || 'http://localhost:3003',
   odontogramas: process.env.ODONTOGRAM_SERVICE_URL || 'http://localhost:3004',
-  presupuestos: process.env.BUDGET_SERVICE_URL || 'http://localhost:3005'
+  presupuestos: process.env.BUDGET_SERVICE_URL || 'http://localhost:3005',
+  citas: process.env.APPOINTMENT_SERVICE_URL || 'http://localhost:3006'
 };
 
 // Middlewares globales
@@ -38,8 +39,8 @@ app.use(limiter);
 
 // Health check del gateway
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  res.json({
+    status: 'OK',
     service: 'api-gateway',
     timestamp: new Date().toISOString(),
     services: {
@@ -47,7 +48,8 @@ app.get('/health', (req, res) => {
       patients: SERVICES.patients,
       fichas: SERVICES.fichas,
       odontogramas: SERVICES.odontogramas,
-      presupuestos: SERVICES.presupuestos
+      presupuestos: SERVICES.presupuestos,
+      citas: SERVICES.citas
     }
   });
 });
@@ -62,7 +64,8 @@ app.get('/', (req, res) => {
       patients: '/api/patients/*',
       fichas: '/api/fichas/*',
       odontogramas: '/api/odontogramas/*',
-      presupuestos: '/api/presupuestos/*'
+      presupuestos: '/api/presupuestos/*',
+      citas: '/api/citas/*'
     },
     documentation: '/api/docs'
   });
@@ -150,6 +153,22 @@ app.use('/api/presupuestos', verifyToken, createProxyMiddleware({
   }
 }));
 
+// Servicio de citas (protegido)
+app.use('/api/citas', verifyToken, createProxyMiddleware({
+  target: SERVICES.citas,
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api/citas': '/citas',
+  },
+  onError: (err, req, res) => {
+    console.error('Error en proxy citas:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Error al comunicarse con el servicio de citas'
+    });
+  }
+}));
+
 // Manejo de rutas no encontradas
 app.use('*', (req, res) => {
   res.status(404).json({
@@ -180,4 +199,5 @@ app.listen(PORT, () => {
   console.log(`  📋 Ficha Service: ${SERVICES.fichas}`);
   console.log(`  🦷 Odontogram Service: ${SERVICES.odontogramas}`);
   console.log(`  💰 Budget Service: ${SERVICES.presupuestos}`);
+  console.log(`  📅 Appointment Service: ${SERVICES.citas}`);
 });

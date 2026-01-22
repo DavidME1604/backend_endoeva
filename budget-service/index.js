@@ -19,6 +19,111 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'budget-service' });
 });
 
+// Obtener todos los presupuestos con paginación y búsqueda
+app.get('/presupuestos', verifyToken, [
+  query('page').optional().isInt({ min: 1 }).withMessage('Página inválida'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Límite inválido'),
+  query('search').optional().isString(),
+  query('estado').optional().isIn(['pendiente', 'parcial', 'pagado']).withMessage('Estado inválido')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
+      });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    const { search, estado } = req.query;
+
+    let queryStr = `
+      SELECT p.*,
+             f.id as ficha_id,
+             pac.id as paciente_id,
+             pac.nombres as paciente_nombres,
+             pac.apellidos as paciente_apellidos,
+             pac.historia_clinica
+      FROM presupuestos p
+      JOIN fichas_endodonticas f ON p.ficha_id = f.id
+      JOIN pacientes pac ON f.paciente_id = pac.id
+      WHERE 1=1
+    `;
+    let countQuery = `
+      SELECT COUNT(*)
+      FROM presupuestos p
+      JOIN fichas_endodonticas f ON p.ficha_id = f.id
+      JOIN pacientes pac ON f.paciente_id = pac.id
+      WHERE 1=1
+    `;
+    const params = [];
+    let paramIndex = 1;
+
+    // Filtro por búsqueda (nombre del paciente)
+    if (search) {
+      queryStr += ` AND (pac.nombres ILIKE $${paramIndex} OR pac.apellidos ILIKE $${paramIndex} OR pac.historia_clinica ILIKE $${paramIndex})`;
+      countQuery += ` AND (pac.nombres ILIKE $${paramIndex} OR pac.apellidos ILIKE $${paramIndex} OR pac.historia_clinica ILIKE $${paramIndex})`;
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    // Filtro por estado de pago
+    if (estado) {
+      if (estado === 'pendiente') {
+        queryStr += ` AND p.total_pagado = 0`;
+        countQuery += ` AND p.total_pagado = 0`;
+      } else if (estado === 'parcial') {
+        queryStr += ` AND p.total_pagado > 0 AND p.saldo > 0`;
+        countQuery += ` AND p.total_pagado > 0 AND p.saldo > 0`;
+      } else if (estado === 'pagado') {
+        queryStr += ` AND p.saldo = 0`;
+        countQuery += ` AND p.saldo = 0`;
+      }
+    }
+
+    queryStr += ` ORDER BY p.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(limit, offset);
+
+    const result = await pool.query(queryStr, params);
+    const countResult = await pool.query(countQuery, params.slice(0, -2));
+    const total = parseInt(countResult.rows[0].count);
+
+    // Formatear respuesta
+    const presupuestosFormateados = result.rows.map(row => ({
+      id: row.id,
+      ficha_id: row.ficha_id,
+      total: row.total,
+      total_pagado: row.total_pagado,
+      saldo: row.saldo,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      paciente: {
+        id: row.paciente_id,
+        nombres: row.paciente_nombres,
+        apellidos: row.paciente_apellidos,
+        historia_clinica: row.historia_clinica
+      },
+      estado_pago: row.saldo == 0 ? 'pagado' : (row.total_pagado > 0 ? 'parcial' : 'pendiente')
+    }));
+
+    return successResponse(res, {
+      presupuestos: presupuestosFormateados,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    }, 'Presupuestos obtenidos exitosamente');
+
+  } catch (error) {
+    return handleError(res, error, 'Error al obtener presupuestos');
+  }
+});
+
 // Crear presupuesto con actos
 app.post('/presupuestos', verifyToken, [
   body('ficha_id').isInt().withMessage('ID de ficha inválido'),
@@ -183,19 +288,28 @@ app.get('/presupuestos/:id', verifyToken, [
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        success: false, 
-        errors: errors.array() 
+      return res.status(400).json({
+        success: false,
+        errors: errors.array()
       });
     }
 
     const { id } = req.params;
 
-    // Obtener presupuesto
-    const presupuestoResult = await pool.query(
-      'SELECT * FROM presupuestos WHERE id = $1',
-      [id]
-    );
+    // Obtener presupuesto con datos del paciente
+    const presupuestoResult = await pool.query(`
+      SELECT p.*,
+             f.id as ficha_id,
+             f.pieza_dental,
+             pac.id as paciente_id,
+             pac.nombres as paciente_nombres,
+             pac.apellidos as paciente_apellidos,
+             pac.historia_clinica
+      FROM presupuestos p
+      JOIN fichas_endodonticas f ON p.ficha_id = f.id
+      JOIN pacientes pac ON f.paciente_id = pac.id
+      WHERE p.id = $1
+    `, [id]);
 
     if (presupuestoResult.rows.length === 0) {
       return res.status(404).json({
@@ -204,7 +318,7 @@ app.get('/presupuestos/:id', verifyToken, [
       });
     }
 
-    const presupuesto = presupuestoResult.rows[0];
+    const row = presupuestoResult.rows[0];
 
     // Obtener actos
     const actosResult = await pool.query(
@@ -218,11 +332,30 @@ app.get('/presupuestos/:id', verifyToken, [
       [id]
     );
 
-    return successResponse(res, {
-      presupuesto,
+    // Formatear respuesta
+    const presupuestoFormateado = {
+      id: row.id,
+      ficha_id: row.ficha_id,
+      total: row.total,
+      total_pagado: row.total_pagado,
+      saldo: row.saldo,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      paciente: {
+        id: row.paciente_id,
+        nombres: row.paciente_nombres,
+        apellidos: row.paciente_apellidos,
+        historia_clinica: row.historia_clinica
+      },
+      ficha: {
+        id: row.ficha_id,
+        pieza_dental: row.pieza_dental
+      },
       actos: actosResult.rows,
       pagos: pagosResult.rows
-    }, 'Presupuesto obtenido exitosamente');
+    };
+
+    return successResponse(res, presupuestoFormateado, 'Presupuesto obtenido exitosamente');
 
   } catch (error) {
     return handleError(res, error, 'Error al obtener presupuesto');
